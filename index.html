@@ -177,6 +177,7 @@
   </footer>
 
   <script>
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbztBrIqkkr4b7idP1mGL_zM0rt-hpb1T0bIwz5MkX4NVMN5hN_gF0pem4NtYvX7xQ8K/exec";
     const SPREADSHEET_ID = "1CqvY7dnSdw6jT8vL7In-NqXnVTydo_wRa0egA5I0CwA";
     const SHEET_GID = "0";
     const REFRESH_MS = 30000;
@@ -314,6 +315,35 @@
       };
     }
 
+    function normalizeApiRow(row) {
+      const obj = row || {};
+      const get = (...keys) => {
+        for (const key of keys) {
+          if (Object.prototype.hasOwnProperty.call(obj, key) && obj[key] !== null && typeof obj[key] !== "undefined") {
+            return String(obj[key]).trim();
+          }
+        }
+        return "";
+      };
+
+      return {
+        tipo: get("tipo", "TIPO"),
+        fecha: get("fecha", "FECHA"),
+        empresa: get("empresa", "EMPRESA"),
+        vehiculo: get("vehiculo", "vehículo", "VEHICULO", "VEHÍCULO"),
+        horaInicio: get("horaInicio", "hora_inicio", "HORA INICIO", "HORA_INICIO"),
+        horaFinal: get("horaFinal", "hora_final", "HORA FINAL", "HORA_FIN", "HORA_FINAL"),
+        coordinador: get("coordinador", "COORDINADOR"),
+        resultado: get("resultado", "RESULTADO")
+      };
+    }
+
+    function applyRows(rows) {
+      allRows = rows.filter((row) => Object.values(row).some((v) => String(v).trim() !== ""));
+      renderRows();
+      setLastUpdated();
+    }
+
     function handleGvizResponse(response, requestId) {
       if (requestId !== activeRequestId) return;
       if (!response || response.status !== "ok" || !response.table) {
@@ -331,18 +361,23 @@
         return mapRowByHeaders(labels, values);
       });
 
-      allRows = rows.filter((row) => Object.values(row).some((v) => String(v).trim() !== ""));
-      renderRows();
-      setLastUpdated();
+      applyRows(rows);
     }
 
-    function loadAgenda() {
-      activeRequestId += 1;
-      const requestId = activeRequestId;
-      const callbackName = `__agendaCallback_${requestId}`;
-      const script = document.createElement("script");
+    function handleAppsScriptResponse(payload, requestId) {
+      if (requestId !== activeRequestId) return;
+      if (!payload || payload.ok !== true || !Array.isArray(payload.rows)) {
+        throw new Error("Respuesta inválida desde Apps Script");
+      }
 
-      setLoading("Cargando agenda...");
+      const rows = payload.rows.map(normalizeApiRow);
+      applyRows(rows);
+    }
+
+    function loadGvizFallback(requestId) {
+      const callbackName = `__agendaFallback_${requestId}`;
+      const script = document.createElement("script");
+      const query = encodeURIComponent("select *");
 
       window[callbackName] = function(response) {
         cleanup();
@@ -356,7 +391,6 @@
       function cleanup() {
         if (script.parentNode) script.parentNode.removeChild(script);
         delete window[callbackName];
-        clearTimeout(timeoutId);
       }
 
       script.onerror = function() {
@@ -364,12 +398,44 @@
         setLoading("Error cargando la agenda: no se pudo acceder a Google Sheets.");
       };
 
-      const query = encodeURIComponent("select *");
       script.src = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?gid=${SHEET_GID}&headers=1&tq=${query}&tqx=responseHandler:${callbackName}`;
+      document.body.appendChild(script);
+    }
+
+    function loadAgenda() {
+      activeRequestId += 1;
+      const requestId = activeRequestId;
+      const callbackName = `__agendaCallback_${requestId}`;
+      const script = document.createElement("script");
+
+      setLoading("Cargando agenda...");
+
+      window[callbackName] = function(response) {
+        cleanup();
+        try {
+          handleAppsScriptResponse(response, requestId);
+        } catch (error) {
+          loadGvizFallback(requestId);
+        }
+      };
+
+      function cleanup() {
+        if (script.parentNode) script.parentNode.removeChild(script);
+        delete window[callbackName];
+        clearTimeout(timeoutId);
+      }
+
+      script.onerror = function() {
+        cleanup();
+        loadGvizFallback(requestId);
+      };
+
+      const appUrl = `${APPS_SCRIPT_URL}?id=${encodeURIComponent(SPREADSHEET_ID)}&gid=${encodeURIComponent(SHEET_GID)}&callback=${encodeURIComponent(callbackName)}`;
+      script.src = appUrl;
 
       const timeoutId = window.setTimeout(function() {
         cleanup();
-        setLoading("Error cargando la agenda: tiempo de espera agotado.");
+        loadGvizFallback(requestId);
       }, 10000);
 
       document.body.appendChild(script);
