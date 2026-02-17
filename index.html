@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Agenda Inspecciones Vehiculares</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    :root{
+      --bg:#ffffff;
+      --panel:#f5f5f5;
+      --accent:#d71920;
+      --text:#000000;
+      --border:#d0d0d0;
+      --res-habilitado:#4caf50;
+      --res-inhabilitado:#e53935;
+      --res-condicionado:#f2a900;
+      --res-sin:#2196f3;
+      --res-no-se-presenta:#5e2129;
+    }
+
+    html,body{height:100%;}
+    body{
+      margin:0;
+      font-family:Arial, Helvetica, sans-serif;
+      background:var(--bg);
+      color:var(--text);
+    }
+
+    header{
+      display:flex;
+      align-items:center;
+      gap:18px;
+      padding:10px 24px;
+      background:var(--panel);
+      border-bottom:2px solid var(--accent);
+    }
+
+    #logo{
+      height:120px;
+      width:auto;
+      object-fit:contain;
+    }
+
+    h1{
+      margin:0;
+      font-size:2rem;
+      letter-spacing:1px;
+      color:#000;
+    }
+
+    .subtitle{
+      color:#444;
+      font-size:.9rem;
+      margin-top:4px;
+    }
+
+    main{padding:8px 10px;}
+
+    .controls{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      margin-bottom:8px;
+      font-size:.85rem;
+      color:#000;
+    }
+
+    select{
+      height:20px;
+      font-size:.75rem;
+      border:1px solid #999;
+      background:#fff;
+    }
+
+    table{
+      width:100%;
+      border-collapse:collapse;
+      table-layout:fixed;
+      background:#fff;
+    }
+
+    thead{
+      background:#eaeaea;
+      position:sticky;
+      top:0;
+      z-index:1;
+    }
+
+    th,td{
+      border:1px solid var(--border);
+      padding:2px 6px;
+      text-align:center;
+      font-size:.72rem;
+      color:#000;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+
+    th{
+      text-transform:uppercase;
+      font-weight:700;
+      background:#f0f0f0;
+    }
+
+    tbody tr:nth-child(even){background:#fafafa;}
+    tbody tr:nth-child(odd){background:#ffffff;}
+    .hoy{background:#ffefef !important;}
+
+    .resultado.res-habilitado{background:var(--res-habilitado) !important;color:#fff !important;}
+    .resultado.res-inhabilitado{background:var(--res-inhabilitado) !important;color:#fff !important;}
+    .resultado.res-condicionado{background:var(--res-condicionado) !important;color:#000 !important;}
+    .resultado.res-sin{background:var(--res-sin) !important;color:#fff !important;}
+    .resultado.res-no-se-presenta{background:var(--res-no-se-presenta) !important;color:#fff !important;}
+
+    .empty{
+      opacity:.75;
+      font-style:italic;
+      color:#555;
+    }
+
+    footer{
+      padding:8px 10px;
+      color:#555;
+      font-size:.72rem;
+    }
+
+    @media (max-width:800px){
+      #logo{height:60px;}
+      h1{font-size:1.2rem;}
+      th,td{font-size:.65rem;}
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <img id="logo" src="logo.png" alt="Alberto Ochoa & Cia">
+    <div>
+      <h1>Agenda Inspecciones Vehiculares</h1>
+      <div class="subtitle">Proyección diaria — Alberto Ochoa & Cia. S.A.S</div>
+    </div>
+  </header>
+
+  <main>
+    <div class="controls">
+      <label>Fuente: <strong>Google Sheets</strong></label>
+      <label for="filterDate">Mostrar solo hoy</label>
+      <select id="filterDate">
+        <option value="hoy">Sí</option>
+        <option value="todo" selected>No</option>
+      </select>
+      <div style="flex:1"></div>
+      <div>Última actualización: <span id="last">--</span></div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Tipo</th>
+          <th>Fecha</th>
+          <th>Empresa</th>
+          <th>Vehículo</th>
+          <th>Hora inicio</th>
+          <th>Hora final</th>
+          <th>Coordinador</th>
+          <th>Resultado</th>
+        </tr>
+      </thead>
+      <tbody id="agendaBody">
+        <tr><td class="empty" colspan="8">Cargando agenda...</td></tr>
+      </tbody>
+    </table>
+  </main>
+
+  <footer>
+    Abre esta página en el televisor desde el navegador (usar la IP del equipo servidor).
+  </footer>
+
+  <script>
+    const SPREADSHEET_ID = "1CqvY7dnSdw6jT8vL7In-NqXnVTydo_wRa0egA5I0CwA";
+    const SHEET_GID = "0";
+    const REFRESH_MS = 30000;
+    const bodyEl = document.getElementById("agendaBody");
+    const lastEl = document.getElementById("last");
+    const filterEl = document.getElementById("filterDate");
+    let allRows = [];
+    let activeRequestId = 0;
+
+    function normalize(value) {
+      return String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .trim()
+        .toUpperCase();
+    }
+
+    function parseDate(value) {
+      if (!value) return null;
+      if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+      }
+
+      const text = String(value).trim();
+      if (!text) return null;
+      const gvizDate = text.match(/^Date\((\d{4}),(\d{1,2}),(\d{1,2})(?:,\d{1,2},\d{1,2},\d{1,2})?\)$/);
+      if (gvizDate) {
+        return new Date(Number(gvizDate[1]), Number(gvizDate[2]), Number(gvizDate[3]));
+      }
+      const iso = text.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+      if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+      const latam = text.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+      if (latam) return new Date(Number(latam[3]), Number(latam[2]) - 1, Number(latam[1]));
+
+      const parsed = new Date(text);
+      if (!Number.isNaN(parsed.getTime())) {
+        return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+      }
+      return null;
+    }
+
+    function isToday(dateValue) {
+      const parsed = parseDate(dateValue);
+      if (!parsed) return false;
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      return parsed.getTime() === today.getTime();
+    }
+
+    function resultClass(resultValue) {
+      const normalized = normalize(resultValue);
+      if (normalized.includes("INHABILITADO")) return "res-inhabilitado";
+      if (normalized.includes("CONDICIONADO")) return "res-condicionado";
+      if (normalized.includes("SIN")) return "res-sin";
+      if (normalized.includes("NO SE PRESENTA")) return "res-no-se-presenta";
+      if (normalized.includes("HABILITADO")) return "res-habilitado";
+      return "";
+    }
+
+    function renderRows() {
+      const onlyToday = filterEl.value === "hoy";
+      const visibleRows = onlyToday ? allRows.filter((row) => isToday(row.fecha)) : allRows;
+
+      if (!visibleRows.length) {
+        bodyEl.innerHTML = '<tr><td class="empty" colspan="8">No hay registros para mostrar.</td></tr>';
+        return;
+      }
+
+      bodyEl.innerHTML = "";
+      for (const row of visibleRows) {
+        const tr = document.createElement("tr");
+        if (isToday(row.fecha)) tr.classList.add("hoy");
+
+        const fields = [
+          row.tipo,
+          row.fecha,
+          row.empresa,
+          row.vehiculo,
+          row.horaInicio,
+          row.horaFinal,
+          row.coordinador,
+          row.resultado
+        ];
+
+        fields.forEach((value, index) => {
+          const td = document.createElement("td");
+          td.textContent = value || "";
+          if (index === fields.length - 1) {
+            td.classList.add("resultado");
+            const styleClass = resultClass(value);
+            if (styleClass) td.classList.add(styleClass);
+          }
+          tr.appendChild(td);
+        });
+
+        bodyEl.appendChild(tr);
+      }
+    }
+
+    function setLoading(message) {
+      bodyEl.innerHTML = `<tr><td class="empty" colspan="8">${message}</td></tr>`;
+    }
+
+    function setLastUpdated() {
+      const now = new Date();
+      lastEl.textContent = now.toLocaleString("es-CO", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      });
+    }
+
+    function mapRowByHeaders(headers, rawRow) {
+      const normalizedHeaders = headers.map(normalize);
+      const get = (...keys) => {
+        for (const key of keys) {
+          const index = normalizedHeaders.findIndex((h) => h === normalize(key));
+          if (index >= 0) return rawRow[index] ?? "";
+        }
+        return "";
+      };
+
+      return {
+        tipo: get("TIPO"),
+        fecha: get("FECHA"),
+        empresa: get("EMPRESA"),
+        vehiculo: get("VEHICULO", "VEHÍCULO"),
+        horaInicio: get("HORA INICIO", "HORA_INICIO"),
+        horaFinal: get("HORA FINAL", "HORA_FIN", "HORA FINALIZACION", "HORA_FINAL"),
+        coordinador: get("COORDINADOR"),
+        resultado: get("RESULTADO")
+      };
+    }
+
+    function handleGvizResponse(response, requestId) {
+      if (requestId !== activeRequestId) return;
+      if (!response || response.status !== "ok" || !response.table) {
+        throw new Error("La hoja no es pública o no está publicada.");
+      }
+
+      const labels = response.table.cols.map((col) => col.label || col.id || "");
+      const rows = (response.table.rows || []).map((row) => {
+        const values = (row.c || []).map((cell) => {
+          if (!cell) return "";
+          if (typeof cell.f !== "undefined" && cell.f !== null && String(cell.f).trim() !== "") return cell.f;
+          if (typeof cell.v !== "undefined" && cell.v !== null) return cell.v;
+          return "";
+        });
+        return mapRowByHeaders(labels, values);
+      });
+
+      allRows = rows.filter((row) => Object.values(row).some((v) => String(v).trim() !== ""));
+      renderRows();
+      setLastUpdated();
+    }
+
+    function loadAgenda() {
+      activeRequestId += 1;
+      const requestId = activeRequestId;
+      const callbackName = `__agendaCallback_${requestId}`;
+      const script = document.createElement("script");
+
+      setLoading("Cargando agenda...");
+
+      window[callbackName] = function(response) {
+        cleanup();
+        try {
+          handleGvizResponse(response, requestId);
+        } catch (error) {
+          setLoading("Error cargando la agenda: revisa que la hoja esté publicada y visible para cualquiera con el enlace.");
+        }
+      };
+
+      function cleanup() {
+        if (script.parentNode) script.parentNode.removeChild(script);
+        delete window[callbackName];
+        clearTimeout(timeoutId);
+      }
+
+      script.onerror = function() {
+        cleanup();
+        setLoading("Error cargando la agenda: no se pudo acceder a Google Sheets.");
+      };
+
+      const query = encodeURIComponent("select *");
+      script.src = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?gid=${SHEET_GID}&headers=1&tq=${query}&tqx=responseHandler:${callbackName}`;
+
+      const timeoutId = window.setTimeout(function() {
+        cleanup();
+        setLoading("Error cargando la agenda: tiempo de espera agotado.");
+      }, 10000);
+
+      document.body.appendChild(script);
+    }
+
+    filterEl.addEventListener("change", renderRows);
+    loadAgenda();
+    window.setInterval(loadAgenda, REFRESH_MS);
+  </script>
+</body>
+</html>
