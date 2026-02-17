@@ -186,6 +186,7 @@
     const filterEl = document.getElementById("filterDate");
     let allRows = [];
     let activeRequestId = 0;
+    let hasLoadedOnce = false;
 
     function normalize(value) {
       return String(value || "")
@@ -281,6 +282,12 @@
       bodyEl.innerHTML = `<tr><td class="empty" colspan="8">${message}</td></tr>`;
     }
 
+    function showStatusMessage(message) {
+      if (!hasLoadedOnce || allRows.length === 0) {
+        setLoading(message);
+      }
+    }
+
     function setLastUpdated() {
       const now = new Date();
       lastEl.textContent = now.toLocaleString("es-CO", {
@@ -342,6 +349,7 @@
       allRows = rows.filter((row) => Object.values(row).some((v) => String(v).trim() !== ""));
       renderRows();
       setLastUpdated();
+      hasLoadedOnce = true;
     }
 
     function handleGvizResponse(response, requestId) {
@@ -384,7 +392,7 @@
         try {
           handleGvizResponse(response, requestId);
         } catch (error) {
-          setLoading("Error cargando la agenda: revisa que la hoja esté publicada y visible para cualquiera con el enlace.");
+          showStatusMessage("Error cargando la agenda: revisa que la hoja esté publicada y visible para cualquiera con el enlace.");
         }
       };
 
@@ -395,7 +403,7 @@
 
       script.onerror = function() {
         cleanup();
-        setLoading("Error cargando la agenda: no se pudo acceder a Google Sheets.");
+        showStatusMessage("Error cargando la agenda: no se pudo acceder a Google Sheets.");
       };
 
       script.src = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?gid=${SHEET_GID}&headers=1&tq=${query}&tqx=responseHandler:${callbackName}`;
@@ -408,7 +416,9 @@
       const callbackName = `__agendaCallback_${requestId}`;
       const script = document.createElement("script");
 
-      setLoading("Cargando agenda...");
+      if (!hasLoadedOnce || allRows.length === 0) {
+        setLoading("Cargando agenda...");
+      }
 
       window[callbackName] = function(response) {
         cleanup();
