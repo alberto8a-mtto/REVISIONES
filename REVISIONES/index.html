@@ -197,6 +197,10 @@
         .toUpperCase();
     }
 
+    function canonicalKey(value) {
+      return normalize(value).replace(/[^A-Z0-9]/g, "");
+    }
+
     function parseDate(value) {
       if (!value) return null;
       if (value instanceof Date && !Number.isNaN(value.getTime())) {
@@ -358,10 +362,15 @@
     }
 
     function mapRowByHeaders(headers, rawRow) {
-      const normalizedHeaders = headers.map(normalize);
+      const canonicalHeaders = headers.map(canonicalKey);
       const get = (...keys) => {
+        const canonicalKeys = keys.map(canonicalKey);
         for (const key of keys) {
-          const index = normalizedHeaders.findIndex((h) => h === normalize(key));
+          const index = canonicalHeaders.findIndex((h) => h === canonicalKey(key));
+          if (index >= 0) return rawRow[index] ?? "";
+        }
+        for (const canonical of canonicalKeys) {
+          const index = canonicalHeaders.findIndex((h) => h === canonical);
           if (index >= 0) return rawRow[index] ?? "";
         }
         return "";
@@ -379,25 +388,48 @@
       };
     }
 
+    function mapRowByPosition(rawRow) {
+      return {
+        tipo: rawRow[0] ?? "",
+        fecha: rawRow[1] ?? "",
+        empresa: rawRow[2] ?? "",
+        vehiculo: rawRow[3] ?? "",
+        horaInicio: rawRow[4] ?? "",
+        horaFinal: rawRow[5] ?? "",
+        coordinador: rawRow[6] ?? "",
+        resultado: rawRow[7] ?? ""
+      };
+    }
+
     function normalizeApiRow(row) {
       const obj = row || {};
+      const entries = Object.entries(obj);
       const get = (...keys) => {
+        const normalizedKeys = keys.map(normalize);
+        const canonicalKeys = keys.map(canonicalKey);
         for (const key of keys) {
           if (Object.prototype.hasOwnProperty.call(obj, key) && obj[key] !== null && typeof obj[key] !== "undefined") {
             return String(obj[key]).trim();
           }
         }
+        for (const [rawKey, rawValue] of entries) {
+          const rawNormalized = normalize(rawKey);
+          const rawCanonical = canonicalKey(rawKey);
+          if (!normalizedKeys.includes(rawNormalized) && !canonicalKeys.includes(rawCanonical)) continue;
+          if (rawValue === null || typeof rawValue === "undefined") continue;
+          return String(rawValue).trim();
+        }
         return "";
       };
 
       return {
-        tipo: get("tipo", "TIPO"),
+        tipo: get("tipo", "TIPO", "tipo_revision", "TIPO REVISION", "CLASE", "SERVICIO"),
         fecha: get("fecha", "FECHA"),
-        empresa: get("empresa", "EMPRESA"),
-        vehiculo: get("vehiculo", "vehículo", "VEHICULO", "VEHÍCULO"),
+        empresa: get("empresa", "EMPRESA", "RAZON SOCIAL", "RAZON_SOCIAL"),
+        vehiculo: get("vehiculo", "vehículo", "VEHICULO", "VEHÍCULO", "PLACA", "MOVIL"),
         horaInicio: get("horaInicio", "hora_inicio", "HORA INICIO", "HORA_INICIO"),
         horaFinal: get("horaFinal", "hora_final", "HORA FINAL", "HORA_FIN", "HORA_FINAL"),
-        coordinador: get("coordinador", "COORDINADOR"),
+        coordinador: get("coordinador", "COORDINADOR", "INSPECTOR"),
         resultado: get("resultado", "RESULTADO")
       };
     }
@@ -432,11 +464,28 @@
 
     function handleAppsScriptResponse(payload, requestId) {
       if (requestId !== activeRequestId) return;
-      if (!payload || payload.ok !== true || !Array.isArray(payload.rows)) {
+
+      const sourceRows = Array.isArray(payload?.rows)
+        ? payload.rows
+        : (Array.isArray(payload?.data) ? payload.data : (Array.isArray(payload?.values) ? payload.values : []));
+
+      if (!payload || sourceRows.length === 0) {
         throw new Error("Respuesta inválida desde Apps Script");
       }
 
-      const rows = payload.rows.map(normalizeApiRow);
+      const incomingHeaders = Array.isArray(payload.headers)
+        ? payload.headers
+        : (Array.isArray(payload.columns) ? payload.columns : null);
+
+      const rows = sourceRows.map((row) => {
+        if (incomingHeaders && Array.isArray(row)) {
+          return mapRowByHeaders(incomingHeaders, row);
+        }
+        if (Array.isArray(row)) {
+          return mapRowByPosition(row);
+        }
+        return normalizeApiRow(row);
+      });
       applyRows(rows);
     }
 
