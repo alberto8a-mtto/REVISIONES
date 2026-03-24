@@ -97,6 +97,19 @@
       text-overflow:ellipsis;
     }
 
+    th:first-child,
+    td:first-child{
+      width:120px;
+      min-width:120px;
+    }
+
+    td:first-child{
+      white-space:normal;
+      overflow:visible;
+      text-overflow:clip;
+      font-weight:600;
+    }
+
     th{
       text-transform:uppercase;
       font-weight:700;
@@ -129,6 +142,11 @@
       #logo{height:60px;}
       h1{font-size:1.2rem;}
       th,td{font-size:.65rem;}
+      th:first-child,
+      td:first-child{
+        width:90px;
+        min-width:90px;
+      }
     }
   </style>
 </head>
@@ -177,13 +195,14 @@
   </footer>
 
   <script>
-    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbztBrIqkkr4b7idP1mGL_zM0rt-hpb1T0bIwz5MkX4NVMN5hN_gF0pem4NtYvX7xQ8K/exec";
     const SPREADSHEET_ID = "1CqvY7dnSdw6jT8vL7In-NqXnVTydo_wRa0egA5I0CwA";
     const SHEET_GID = "0";
     const REFRESH_MS = 30000;
+
     const bodyEl = document.getElementById("agendaBody");
     const lastEl = document.getElementById("last");
     const filterEl = document.getElementById("filterDate");
+
     let allRows = [];
     let activeRequestId = 0;
     let hasLoadedOnce = false;
@@ -209,12 +228,15 @@
 
       const text = String(value).trim();
       if (!text) return null;
+
       const gvizDate = text.match(/^Date\((\d{4}),(\d{1,2}),(\d{1,2})(?:,\d{1,2},\d{1,2},\d{1,2})?\)$/);
       if (gvizDate) {
         return new Date(Number(gvizDate[1]), Number(gvizDate[2]), Number(gvizDate[3]));
       }
+
       const iso = text.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
       if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+
       const latam = text.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
       if (latam) return new Date(Number(latam[3]), Number(latam[2]) - 1, Number(latam[1]));
 
@@ -222,6 +244,7 @@
       if (!Number.isNaN(parsed.getTime())) {
         return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
       }
+
       return null;
     }
 
@@ -237,9 +260,45 @@
       const normalized = normalize(resultValue);
       if (normalized.includes("INHABILITADO")) return "res-inhabilitado";
       if (normalized.includes("CONDICIONADO")) return "res-condicionado";
-      if (normalized.includes("SIN")) return "res-sin";
       if (normalized.includes("NO SE PRESENTA")) return "res-no-se-presenta";
+      if (normalized.includes("SIN")) return "res-sin";
       if (normalized.includes("HABILITADO")) return "res-habilitado";
+      return "";
+    }
+
+    function mapRowByHeaders(headers, rawRow) {
+      const canonicalHeaders = headers.map(canonicalKey);
+      const get = (keys, fallbackIndex) => {
+        for (const key of keys) {
+          const index = canonicalHeaders.findIndex((h) => h === canonicalKey(key));
+          if (index >= 0) return rawRow[index] ?? "";
+        }
+        if (typeof fallbackIndex === "number") {
+          return rawRow[fallbackIndex] ?? "";
+        }
+        return "";
+      };
+
+      return {
+        tipo: get(["TIPO", "TIPO REVISION", "TIPO DE REVISION", "CLASE", "SERVICIO"], 0),
+        fecha: get(["FECHA"], 1),
+        empresa: get(["EMPRESA", "RAZON SOCIAL"], 2),
+        vehiculo: get(["VEHICULO", "VEHÍCULO", "PLACA", "MOVIL"], 3),
+        horaInicio: get(["HORA INICIO", "HORA_INICIO"], 4),
+        horaFinal: get(["HORA FINAL", "HORA_FIN", "HORA_FINAL", "HORA FINALIZACION"], 5),
+        coordinador: get(["COORDINADOR", "INSPECTOR"], 6),
+        resultado: get(["RESULTADO"], 7)
+      };
+    }
+
+    function extractCellValue(cell) {
+      if (!cell) return "";
+      if (typeof cell.f !== "undefined" && cell.f !== null && String(cell.f).trim() !== "") {
+        return String(cell.f).trim();
+      }
+      if (typeof cell.v !== "undefined" && cell.v !== null) {
+        return String(cell.v).trim();
+      }
       return "";
     }
 
@@ -254,6 +313,10 @@
         row.coordinador,
         row.resultado
       ].map((value) => value || "");
+    }
+
+    function buildRowsSignature(rows) {
+      return rows.map((row) => toFields(row).join("\u0001")).join("\u0002");
     }
 
     function ensureDataRow(index) {
@@ -284,6 +347,7 @@
     function renderRows() {
       const onlyToday = filterEl.value === "hoy";
       const visibleRows = onlyToday ? allRows.filter((row) => isToday(row.fecha)) : allRows;
+
       const today = new Date();
       const dayKey = `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`;
       const renderSignature = `${onlyToday ? "hoy" : "todo"}\u0003${dayKey}\u0003${buildRowsSignature(visibleRows)}`;
@@ -305,9 +369,11 @@
         for (let colIndex = 0; colIndex < fields.length; colIndex += 1) {
           const value = fields[colIndex];
           const td = tr.children[colIndex];
+
           if (td.textContent !== value) {
             td.textContent = value;
           }
+
           if (colIndex === fields.length - 1) {
             applyResultClasses(td, value);
           } else if (td.className) {
@@ -334,21 +400,6 @@
       }
     }
 
-    function buildRowsSignature(rows) {
-      return rows.map((row) => (
-        [
-          row.tipo,
-          row.fecha,
-          row.empresa,
-          row.vehiculo,
-          row.horaInicio,
-          row.horaFinal,
-          row.coordinador,
-          row.resultado
-        ].join("\u0001")
-      )).join("\u0002");
-    }
-
     function setLastUpdated() {
       const now = new Date();
       lastEl.textContent = now.toLocaleString("es-CO", {
@@ -359,79 +410,6 @@
         minute: "2-digit",
         second: "2-digit"
       });
-    }
-
-    function mapRowByHeaders(headers, rawRow) {
-      const canonicalHeaders = headers.map(canonicalKey);
-      const get = (...keys) => {
-        const canonicalKeys = keys.map(canonicalKey);
-        for (const key of keys) {
-          const index = canonicalHeaders.findIndex((h) => h === canonicalKey(key));
-          if (index >= 0) return rawRow[index] ?? "";
-        }
-        for (const canonical of canonicalKeys) {
-          const index = canonicalHeaders.findIndex((h) => h === canonical);
-          if (index >= 0) return rawRow[index] ?? "";
-        }
-        return "";
-      };
-
-      return {
-        tipo: get("TIPO"),
-        fecha: get("FECHA"),
-        empresa: get("EMPRESA"),
-        vehiculo: get("VEHICULO", "VEHÍCULO"),
-        horaInicio: get("HORA INICIO", "HORA_INICIO"),
-        horaFinal: get("HORA FINAL", "HORA_FIN", "HORA FINALIZACION", "HORA_FINAL"),
-        coordinador: get("COORDINADOR"),
-        resultado: get("RESULTADO")
-      };
-    }
-
-    function mapRowByPosition(rawRow) {
-      return {
-        tipo: rawRow[0] ?? "",
-        fecha: rawRow[1] ?? "",
-        empresa: rawRow[2] ?? "",
-        vehiculo: rawRow[3] ?? "",
-        horaInicio: rawRow[4] ?? "",
-        horaFinal: rawRow[5] ?? "",
-        coordinador: rawRow[6] ?? "",
-        resultado: rawRow[7] ?? ""
-      };
-    }
-
-    function normalizeApiRow(row) {
-      const obj = row || {};
-      const entries = Object.entries(obj);
-      const get = (...keys) => {
-        const normalizedKeys = keys.map(normalize);
-        const canonicalKeys = keys.map(canonicalKey);
-        for (const key of keys) {
-          if (Object.prototype.hasOwnProperty.call(obj, key) && obj[key] !== null && typeof obj[key] !== "undefined") {
-            return String(obj[key]).trim();
-          }
-        }
-        for (const [rawKey, rawValue] of entries) {
-          const rawNormalized = normalize(rawKey);
-          const rawCanonical = canonicalKey(rawKey);
-          if (!normalizedKeys.includes(rawNormalized) && !canonicalKeys.includes(rawCanonical)) continue;
-          if (rawValue === null || typeof rawValue === "undefined") continue;
-          return String(rawValue).trim();
-        }
-        return "";
-      };
-
-      return {
-        tipo: get("tipo", "TIPO", "tipo_revision", "TIPO REVISION", "CLASE", "SERVICIO"),
-        fecha: get("fecha", "FECHA"),
-        empresa: get("empresa", "EMPRESA", "RAZON SOCIAL", "RAZON_SOCIAL"),
-        vehiculo: get("vehiculo", "vehículo", "VEHICULO", "VEHÍCULO", "PLACA", "MOVIL"),
-        horaInicio: get("horaInicio", "hora_inicio", "HORA INICIO", "HORA_INICIO"),
-        horaFinal: get("horaFinal", "hora_final", "HORA FINAL", "HORA_FIN", "HORA_FINAL"),
-        coordinador: get("coordinador", "COORDINADOR", "INSPECTOR"),
-        resultado: get("resultado", "RESULTADO")
-      };
     }
 
     function applyRows(rows) {
@@ -450,49 +428,28 @@
 
       const labels = response.table.cols.map((col) => col.label || col.id || "");
       const rows = (response.table.rows || []).map((row) => {
-        const values = (row.c || []).map((cell) => {
-          if (!cell) return "";
-          if (typeof cell.f !== "undefined" && cell.f !== null && String(cell.f).trim() !== "") return cell.f;
-          if (typeof cell.v !== "undefined" && cell.v !== null) return cell.v;
-          return "";
-        });
+        const values = (row.c || []).map(extractCellValue);
         return mapRowByHeaders(labels, values);
       });
 
       applyRows(rows);
     }
 
-    function handleAppsScriptResponse(payload, requestId) {
-      if (requestId !== activeRequestId) return;
-
-      const sourceRows = Array.isArray(payload?.rows)
-        ? payload.rows
-        : (Array.isArray(payload?.data) ? payload.data : (Array.isArray(payload?.values) ? payload.values : []));
-
-      if (!payload || sourceRows.length === 0) {
-        throw new Error("Respuesta inválida desde Apps Script");
-      }
-
-      const incomingHeaders = Array.isArray(payload.headers)
-        ? payload.headers
-        : (Array.isArray(payload.columns) ? payload.columns : null);
-
-      const rows = sourceRows.map((row) => {
-        if (incomingHeaders && Array.isArray(row)) {
-          return mapRowByHeaders(incomingHeaders, row);
-        }
-        if (Array.isArray(row)) {
-          return mapRowByPosition(row);
-        }
-        return normalizeApiRow(row);
-      });
-      applyRows(rows);
-    }
-
-    function loadGvizFallback(requestId) {
-      const callbackName = `__agendaFallback_${requestId}`;
+    function loadAgenda() {
+      activeRequestId += 1;
+      const requestId = activeRequestId;
+      const callbackName = `__agendaGviz_${requestId}`;
       const script = document.createElement("script");
       const query = encodeURIComponent("select *");
+
+      if (!hasLoadedOnce || allRows.length === 0) {
+        setLoading("Cargando agenda...");
+      }
+
+      function cleanup() {
+        if (script.parentNode) script.parentNode.removeChild(script);
+        delete window[callbackName];
+      }
 
       window[callbackName] = function(response) {
         cleanup();
@@ -503,58 +460,12 @@
         }
       };
 
-      function cleanup() {
-        if (script.parentNode) script.parentNode.removeChild(script);
-        delete window[callbackName];
-      }
-
       script.onerror = function() {
         cleanup();
         showStatusMessage("Error cargando la agenda: no se pudo acceder a Google Sheets.");
       };
 
       script.src = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?gid=${SHEET_GID}&headers=1&tq=${query}&tqx=responseHandler:${callbackName}`;
-      document.body.appendChild(script);
-    }
-
-    function loadAgenda() {
-      activeRequestId += 1;
-      const requestId = activeRequestId;
-      const callbackName = `__agendaCallback_${requestId}`;
-      const script = document.createElement("script");
-
-      if (!hasLoadedOnce || allRows.length === 0) {
-        setLoading("Cargando agenda...");
-      }
-
-      window[callbackName] = function(response) {
-        cleanup();
-        try {
-          handleAppsScriptResponse(response, requestId);
-        } catch (error) {
-          loadGvizFallback(requestId);
-        }
-      };
-
-      function cleanup() {
-        if (script.parentNode) script.parentNode.removeChild(script);
-        delete window[callbackName];
-        clearTimeout(timeoutId);
-      }
-
-      script.onerror = function() {
-        cleanup();
-        loadGvizFallback(requestId);
-      };
-
-      const appUrl = `${APPS_SCRIPT_URL}?id=${encodeURIComponent(SPREADSHEET_ID)}&gid=${encodeURIComponent(SHEET_GID)}&callback=${encodeURIComponent(callbackName)}`;
-      script.src = appUrl;
-
-      const timeoutId = window.setTimeout(function() {
-        cleanup();
-        loadGvizFallback(requestId);
-      }, 10000);
-
       document.body.appendChild(script);
     }
 
